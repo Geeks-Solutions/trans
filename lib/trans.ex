@@ -16,8 +16,9 @@ defmodule Trans do
 
   * `:translates` (required) - list of the fields that will be translated.
   * `:container` (optional) - name of the field that contains the embedded translations.
-    Defaults to`:translations`.
-  * `:default_locale` (optional) - declares the locale of the base untranslated column.
+    Defaults to `:translations`.
+  * `:default_locale_field` (optional) - declares the locale of the base untranslated column.
+    Defaults to `:default_locale`
 
   ## Storing translations
 
@@ -25,13 +26,13 @@ defmodule Trans do
 
       defmodule MyApp.Article do
         use Ecto.Schema
-        use Trans, translates: [:title, :body], default_locale: :en
+        use Trans, translates: [:title, :body]
 
         schema "articles" do
           field :title, :string
           field :body, :string
 
-          translations [:es, :fr]
+          translations
         end
       end
 
@@ -39,16 +40,14 @@ defmodule Trans do
 
       defmodule MyApp.Article do
         use Ecto.Schema
-        use Trans, translates: [:title, :body], default_locale: :en
+        use Trans, translates: [:title, :body]
 
         schema "articles" do
           field :title, :string
           field :body, :string
 
-          embeds_many :translations, Translations, primary_key: :false do
-            embeds_one :es, Fields
-            embeds_one :fr, Fields
-          end
+          field :default_locale, :string
+          embeds_many :translations, Fields, on_replace: :delete
         end
       end
 
@@ -56,6 +55,7 @@ defmodule Trans do
         use Ecto.Schema
 
         embedded_schema do
+          field :locale, :string, primary_key: true
           field :title, :string
           field :body, :string
         end
@@ -67,14 +67,15 @@ defmodule Trans do
 
       defmodule MyApp.Article do
         use Ecto.Schema
-        use Trans, translates: [:title, :body], default_locale: :en
+        use Trans, translates: [:title, :body]
 
         schema "articles" do
           field :title, :string
           field :body, :string
 
-          # Define MyApp.Article.Translations.Fields yourself
-          translations [:es, :fr], build_field_schema: false
+          # :default_locale will be defined but you need to
+          # define MyApp.Article.Translations.Fields yourself
+          translations, build_field_schema: false
         end
       end
 
@@ -96,7 +97,7 @@ defmodule Trans do
 
   * `__trans__(:fields)` - Returns the list of translatable fields.
   * `__trans__(:container)` - Returns the name of the translation container.
-  * `__trans__(:default_locale)` - Returns the name of default locale.
+  * `__trans__(:default_locale_field)` - Returns the name of default locale field.
   """
 
   @typedoc """
@@ -122,8 +123,8 @@ defmodule Trans do
 
       Module.put_attribute(
         __MODULE__,
-        :trans_default_locale,
-        unquote(translation_default_locale(opts))
+        :trans_default_locale_field,
+        unquote(translation_default_locale_field(opts))
       )
 
       import Trans, only: :macros
@@ -137,14 +138,14 @@ defmodule Trans do
       @spec __trans__(:container) :: atom
       def __trans__(:container), do: @trans_container
 
-      @spec __trans__(:default_locale) :: atom
-      def __trans__(:default_locale), do: @trans_default_locale
+      @spec __trans__(:default_locale_field) :: atom
+      def __trans__(:default_locale_field), do: @trans_default_locale_field
     end
   end
 
   @doc false
   def default_trans_options do
-    [on_replace: :update, primary_key: false, build_field_schema: true]
+    [on_replace: :delete, build_field_schema: true]
   end
 
   @doc """
@@ -160,21 +161,19 @@ defmodule Trans do
 
   Calling:
 
-      translations [:en, :es]
+      translations
 
   Is equivalent to:
 
-      embeds_one :translations, Translations do
-        embeds_one :en, Fields
-        embeds_one :es, Fields
-      end
+      field :default_locale, :string
+      embeds_many :translations, Fields
 
   ## Options
   - **build_field_schema (boolean / default: false)** wether to automatically generate the module for
   locales or not. Set this to false if you want to customize how the field translations
   are stored and keep in mind that you must create a `YourModule.Translations.Fields` schema.
   """
-  defmacro translations(locales, options \\ []) do
+  defmacro translations(options \\ []) do
     options = Keyword.merge(Trans.default_trans_options(), options)
     {build_field_schema, options} = Keyword.pop(options, :build_field_schema)
 
@@ -183,13 +182,11 @@ defmodule Trans do
         @before_compile {Trans, :__build_embedded_schema__}
       end
 
+      field Module.get_attribute(__MODULE__, :trans_default_locale_field), :string
       @translation_module Module.concat(__MODULE__, Translations)
-
-      embeds_one @trans_container, Translations, unquote(options) do
-        for locale_name <- List.wrap(unquote(locales)) do
-          embeds_one locale_name, Module.concat([__MODULE__, Fields]), on_replace: :update
-        end
-      end
+      embeds_many @trans_container,
+                  Module.concat([__MODULE__, Translations, Fields]),
+                  unquote(options)
     end
   end
 
@@ -202,8 +199,11 @@ defmodule Trans do
         use Ecto.Schema
         import Ecto.Changeset
 
+        @derive Jason.Encoder
         @primary_key false
         embedded_schema do
+          field :locale, :string, primary_key: true
+
           for a_field <- unquote(fields) do
             field a_field, :string
           end
@@ -211,8 +211,8 @@ defmodule Trans do
 
         def changeset(fields, params) do
           fields
-          |> cast(params, unquote(fields))
-          |> validate_required(unquote(fields))
+          |> cast(params, [:locale, unquote_splicing(fields)])
+          |> validate_required([:locale, unquote_splicing(fields)])
         end
       end
     end
@@ -284,7 +284,7 @@ defmodule Trans do
       _ ->
         raise ArgumentError,
           message:
-            "#{module} declares '#{MapSet.to_list(invalid_fields)}' as translatable but it they not defined in the module's struct"
+            "#{module} declares '#{MapSet.to_list(invalid_fields)}' as translatable but they are not defined in the module's struct"
     end
   end
 
@@ -318,14 +318,13 @@ defmodule Trans do
     end
   end
 
-  defp translation_default_locale(opts) do
-    case Keyword.fetch(opts, :default_locale) do
-      {:ok, default_locale} ->
-        default_locale
+  defp translation_default_locale_field(opts) do
+    case Keyword.fetch(opts, :default_locale_field) do
+      {:ok, default_locale_field} ->
+        default_locale_field
 
       :error ->
-        raise ArgumentError,
-          message: "Trans requires a 'default_locale' option that contains the default locale"
+        :default_locale
     end
   end
 end

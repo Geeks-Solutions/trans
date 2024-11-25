@@ -75,10 +75,10 @@ defmodule Trans.Translator do
   def translate(%{__struct__: module} = translatable, locale)
       when is_locale(locale) or is_list(locale) do
     if Keyword.has_key?(module.__info__(:functions), :__trans__) do
-      default_locale = module.__trans__(:default_locale)
+      default_locale_field = module.__trans__(:default_locale_field)
 
       translatable
-      |> translate_fields(locale, default_locale)
+      |> translate_fields(locale, Map.get(translatable, default_locale_field))
       |> translate_assocs(locale)
     else
       translatable
@@ -222,19 +222,29 @@ defmodule Trans.Translator do
   # check if struct (means it's using ecto embeds); if so, make sure 'locale' is also atom
   defp get_translations_for_locale(%{__struct__: _} = all_translations, locale)
        when is_binary(locale) do
-    get_translations_for_locale(all_translations, String.to_existing_atom(locale))
+    get_translations_for_locale(all_translations, locale)
   end
 
   defp get_translations_for_locale(%{__struct__: _} = all_translations, locale)
        when is_atom(locale) do
-    Map.fetch(all_translations, locale)
+    Enum.find(all_translations, fn translation -> translation.locale == to_string(locale) end)
+    |> case do
+      nil -> :error
+      translation -> {:ok, translation}
+    end
+
+    # Map.fetch(all_translations, locale)
   end
 
   # fallback to default behaviour
   defp get_translations_for_locale(nil, _locale), do: nil
 
   defp get_translations_for_locale(all_translations, locale) do
-    Map.fetch(all_translations, to_string(locale))
+    Enum.find(all_translations, fn translation -> translation.locale == to_string(locale) end)
+    |> case do
+      nil -> :error
+      translation -> {:ok, translation}
+    end
   end
 
   # there are no translations for this locale embed

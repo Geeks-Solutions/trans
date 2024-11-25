@@ -68,6 +68,7 @@ end
 ```
 
 The first step would be to add a new JSONB column to the table so we can store the translations in it.
+Also add a string field to store the default locale of the record
 
 ```elixir
 defmodule MyApp.Repo.Migrations.AddTranslationsToArticles do
@@ -76,6 +77,7 @@ defmodule MyApp.Repo.Migrations.AddTranslationsToArticles do
   def change do
     alter table(:articles) do
       add :translations, :map
+      add :default_locale, :string
     end
   end
 end
@@ -86,15 +88,15 @@ Once we have the new database column, we can update the Article schema to includ
 ```elixir
 defmodule MyApp.Article do
   use Ecto.Schema
-  use Trans, translates: [:title, :body], default_locale: :en
+  use Trans, translates: [:title, :body]
 
   schema "articles" do
     field :title, :string
     field :body, :string
 
     # This generates a MyApp.Article.Translations schema with a
-    # MyApp.Article.Translations.Fields for :es and :fr
-    translations [:es, :fr]
+    # MyApp.Article.Translations.Fields
+    translations
   end
 end
 ```
@@ -138,12 +140,12 @@ You can override the default translation container passing the `container` optio
 ```elixir
 defmodule MyApp.Article do
   use Ecto.Schema
-  use Trans, translates: [:title, :body], default_locale: :en, container: :transcriptions
+  use Trans, translates: [:title, :body], container: :transcriptions
 
   schema "articles" do
     field :title, :string
     field :body, :strings
-    translations [:es, :fr]
+    translations
   end
 end
 ```
@@ -155,12 +157,14 @@ If you want to use your own translation module you can simply pass the `build_fi
 ```elixir
 defmodule MyApp.Article do
   use Ecto.Schema
-  use Trans, translates: [:title, :body], default_locale: :en
+  use Trans, translates: [:title, :body]
 
   defmodule Translations.Fields do
     use Ecto.Schema
 
     embedded_schema do
+        # This stores the default locale for each record
+      field :default_locale, :string, primary_key: true
       field :title, :string
       field :body, :string
     end
@@ -170,7 +174,7 @@ defmodule MyApp.Article do
     field :title, :string
     field :body, :string
 
-    translations [:es, :fr], build_field_schema: false
+    translations build_field_schema: false
   end
 end
 ```

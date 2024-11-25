@@ -114,26 +114,28 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     defp generate_query(schema, module, field, locale, true = _static_locales?) do
-      if locale == module.__trans__(:default_locale) do
-        quote do
+      # if locale == module.__trans__(:default_locale) do
+      #   quote do
+      #     field(unquote(schema), unquote(field))
+      #   end
+      # else
+      quote do
+        fragment(
+          "COALESCE(?->?->>?, ?)",
+          field(unquote(schema), unquote(module.__trans__(:container))),
+          ^to_string(unquote(locale)),
+          ^to_string(unquote(field)),
           field(unquote(schema), unquote(field))
-        end
-      else
-        quote do
-          fragment(
-            "COALESCE(?->?->>?, ?)",
-            field(unquote(schema), unquote(module.__trans__(:container))),
-            ^to_string(unquote(locale)),
-            ^to_string(unquote(field)),
-            field(unquote(schema), unquote(field))
-          )
-        end
+        )
       end
+
+      # end
     end
 
     # Called at runtime - we use a database function
     defp generate_query(schema, module, field, locales, false = _static_locales?) do
-      default_locale = to_string(module.__trans__(:default_locale) || :en)
+      # to_string(module.__trans__(:default_locale) || :en)
+      default_locale = :en
       translate_field(module, schema, field, default_locale, locales)
     end
 
